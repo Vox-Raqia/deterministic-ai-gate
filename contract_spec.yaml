@@ -1,0 +1,230 @@
+contract_id: deterministic-ai-gate
+version: 1.0.0
+generated_at: "2026-09-06T14:22:35Z"
+owner: platform-engineering
+classification: production
+
+touchpoint:
+  id: "order-summary-generation"
+  description: "Generates deterministic order summary for downstream fulfillment systems"
+  model: "claude-sonnet-4-20250514"
+  provider: "anthropic"
+  temperature: 0
+  max_tokens: 4096
+
+system_instructions: |
+  You are a deterministic contract enforcer. Your only function is to produce or validate structured payloads
+  that conform exactly to the specified output schema. Under no circumstances may you fabricate fields, add
+  unsolicited narrative, paraphrase outside the contract, or omit required properties. Every response must be
+  valid JSON that passes all five verification gates (TYPE, RANGE, ENUM, LENGTH, FORMAT) without silent
+  type coercion. If the input is incomplete, malformed, or violates constraints, emit a structured error
+  object rather than guessing. Adhere to the schema exactly. Do not explain, apologize, or add prose.
+
+prompt_template: |
+  You are verifying an AI gateway payload. Validate the following raw payload against the strict contract.
+  Return ONLY valid JSON that satisfies the output_schema. No additional text.
+
+output_schema:
+  $schema: "http://json-schema.org/draft-07/schema#"
+  type: object
+  required:
+    - touchpoint_id
+    - result
+    - confidence
+    - status
+    - metadata
+  properties:
+    touchpoint_id:
+      type: string
+      minLength: 1
+      description: "Unique identifier for the verification touchpoint"
+    result:
+      type: string
+      minLength: 1
+      description: "Verification result payload"
+    confidence:
+      type: number
+      minimum: 0.0
+      maximum: 1.0
+      description: "Confidence score between 0.0 and 1.0"
+    status:
+      type: string
+      enum: ["SUCCESS", "CANNOT_FULFILL", "REJECTED"]
+      description: "Verification outcome status"
+    metadata:
+      type: object
+      required:
+        - timestamp
+        - provider
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: "ISO-8601 timestamp of verification"
+        provider:
+          type: string
+          minLength: 1
+          description: "Model provider identifier"
+
+error_schema:
+  $schema: "http://json-schema.org/draft-07/schema#"
+  type: object
+  required:
+    - error
+    - code
+    - status
+    - title
+    - detail
+    - violations
+    - circuit_breaker
+  properties:
+    error:
+      type: boolean
+      const: true
+    code:
+      type: string
+      const: "SCHEMA_VIOLATION"
+    status:
+      type: integer
+      const: 400
+    title:
+      type: string
+      const: "Schema Violation"
+    detail:
+      type: string
+    violations:
+      type: array
+      items:
+        type: object
+        required:
+          - path
+          - gate
+          - expected
+          - actual
+          - message
+        properties:
+          path:
+            type: string
+            description: "JSON pointer path to the violating field"
+          gate:
+            type: string
+            enum: ["TYPE", "RANGE", "ENUM", "LENGTH", "FORMAT"]
+          expected:
+            type: string
+          actual:
+            type: string
+          message:
+            type: string
+    circuit_breaker:
+      type: string
+      enum: ["OPEN", "HALF_OPEN", "CLOSED"]
+
+verification_gates:
+  - gate: TYPE
+    description: "Enforce exact primitive types without silent coercion"
+    checks:
+      - field: "$.touchpoint_id"
+        expected: str
+      - field: "$.result"
+        expected: str
+      - field: "$.confidence"
+        expected: float
+      - field: "$.status"
+        expected: str
+      - field: "$.metadata"
+        expected: dict
+
+  - gate: LENGTH
+    description: "Validate minimum and maximum string lengths"
+    checks:
+      - field: "$.touchpoint_id"
+        min_length: 1
+      - field: "$.result"
+        min_length: 1
+      - field: "$.metadata.provider"
+        min_length: 1
+
+  - gate: RANGE
+    description: "Validate numeric bounds"
+    checks:
+      - field: "$.confidence"
+        min: 0.0
+        max: 1.0
+
+  - gate: ENUM
+    description: "Restrict values to allowed enumerated sets"
+    checks:
+      - field: "$.status"
+        allowed: ["SUCCESS", "CANNOT_FULFILL", "REJECTED"]
+
+  - gate: FORMAT
+    description: "Validate string patterns and formats"
+    checks:
+      - field: "$.metadata.timestamp"
+        pattern: "^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$"
+        format: "ISO-8601 date-time"
+
+error_handling:
+  max_retries: 2
+  retry_on:
+    - TIMEOUT
+    - RATE_LIMIT
+    - TRANSIENT_ERROR
+  backoff:
+    strategy: exponential
+    base_interval_ms: 1000
+    intervals_ms: [1000, 2000, 4000]
+    jitter: true
+  circuit_breaker:
+    threshold: 3
+    recovery_timeout_seconds: 30
+    states:
+      - CLOSED
+      - OPEN
+      - HALF_OPEN
+  fallback:
+    mode: REJECT
+    message: "Circuit breaker open. Request rejected to preserve deterministic guarantees."
+
+deployment:
+  environments:
+    - staging
+    - production
+  canary:
+    enabled: true
+    percentage: 10
+    duration_minutes: 30
+    metrics:
+      - error_rate
+      - latency_p99
+      - schema_violation_count
+  shadow_mode: true
+  shadow_routing:
+    source: production_traffic
+    target: shadow_instance
+    compare_response: true
+  rollback_trigger:
+    - condition: "error_rate > 0.05 for 5 minutes"
+    - condition: "schema_violation_count > 100 for 10 minutes"
+    - condition: "circuit_breaker_state == OPEN for 60 seconds"
+    - action: automatic_rollback
+    - approval_required: false
+
+observability:
+  tracing:
+    enabled: true
+    sample_rate: 1.0
+  metrics:
+    - name: gate_verification_duration_ms
+      type: histogram
+    - name: gate_violation_count
+      type: counter
+      labels: [gate, field]
+    - name: circuit_breaker_state
+      type: gauge
+  logging:
+    level: INFO
+    include_payload: false
+    redact_fields:
+      - metadata.timestamp
+      - metadata.provider
