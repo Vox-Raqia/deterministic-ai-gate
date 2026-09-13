@@ -20,7 +20,7 @@ Traditional validation assumes well-behaved inputs. Deterministic gates do not.
 ## The 10-Second Audit
 
 ```bash
-git clone https://github.com/vox-de-raqia/deterministic-ai-gate.git
+git clone https://github.com/Vox-Raqia/deterministic-ai-gate.git
 cd deterministic-ai-gate
 python gate.py
 ```
@@ -30,6 +30,8 @@ Expected output: RFC-7807 structured JSON with `"error": true`, `"code": "SCHEMA
 ## Matrix: 5 Gate Taxonomies
 
 Every payload passes through five immutable checks before acceptance. No silent type coercion. No graceful degradation.
+
+> **Note on Gate Taxonomy Alignment:** The five gates below — TYPE, RANGE, ENUM, LENGTH, FORMAT — constitute the **Contract & Schema Verification Sub-Gates (Gate 1 & Gate 2)** of *The High-Rigor Arsenal*. At the macro distributed pipeline boundary, these map to the broader Syntax, Type, Determinism, Side-Effect, and Error-Handling gates defined in the [Vox-Raqia](https://github.com/Vox-Raqia/Vox-Raqia) profile repository. This README focuses on the payload validation boundary.
 
 | Gate | Purpose | Example Violation |
 |------|---------|-------------------|
